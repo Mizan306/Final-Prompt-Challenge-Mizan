@@ -52,13 +52,6 @@
     header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
     h1{margin:0;font-size:24px;color:var(--cyan);letter-spacing:.5px}
     .toolbar{display:flex;gap:8px;align-items:center}
-    .mode{
-      font-size:12px;color:var(--muted);
-      padding:6px 12px;
-      border:1px solid #e5e7eb;
-      border-radius:999px;
-      background:rgba(0,0,0,.05);
-    }
     .btn{
       padding:10px 16px;
       border:0;
@@ -103,7 +96,7 @@
       border-radius:10px;
       padding:12px;
       display:grid;
-      grid-template-columns:auto 1fr auto auto;
+      grid-template-columns:1fr auto auto auto;
       gap:10px;
       align-items:center;
       transition:background .3s,box-shadow .2s;
@@ -111,6 +104,24 @@
     .card:hover{background:rgba(0,0,0,.05)}
     .desc{font-weight:500}
     .desc.done{text-decoration:line-through;color:var(--muted)}
+
+    /* Priority badge */
+    .priority-badge {
+      display:inline-block;
+      padding:4px 10px;
+      border-radius:6px;
+      font-size:13px;
+      font-weight:600;
+      color:white;
+    }
+    .priority-high { background:#ef4444; }   /* red */
+    .priority-medium { background:#f59e0b; } /* yellow */
+    .priority-low { background:#10b981; }    /* green */
+    .priority-done {
+      background:#9ca3af !important;
+      color:#f3f4f6 !important;
+    }
+
     .pill{
       border-radius:8px;
       padding:6px 10px;
@@ -121,7 +132,7 @@
     }
     .pill-green{background:var(--green);color:white}
     .pill-red{background:var(--red);color:white}
-    .addrow{display:grid;grid-template-columns:1fr auto;gap:10px;margin-top:12px}
+    .addrow{display:grid;grid-template-columns:1fr auto auto;gap:10px;margin-top:12px}
     .btn-add{background:var(--cyan)}
     /* Chat */
     .chatlog{max-height:460px;overflow:auto;display:grid;gap:8px}
@@ -143,8 +154,7 @@
     <header>
       <div><h1>Task Manager</h1></div>
       <div class="toolbar">
-        <span id="modeBadge" class="mode">mode: …</span>
-        <button id="refreshBtn" class="btn btn-refresh">↻ Refresh</button>
+        <button id="refreshBtn" class="btn btn-refresh">↻ Refresh Chat</button>
         <button id="toggleBtn" class="btn btn-toggle">🌙 Dark Mode</button>
       </div>
     </header>
@@ -170,6 +180,11 @@
         <div id="taskList" class="list" aria-live="polite"></div>
         <div class="addrow">
           <input id="taskInput" type="text" placeholder="New task..." />
+          <select id="prioritySelect">
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+            <option value="low">Low</option>
+          </select>
           <button id="addBtn" class="btn btn-add">Add Task</button>
         </div>
       </section>
@@ -189,7 +204,7 @@
   <script>
     const $ = (s)=>document.querySelector(s);
 
-    // Theme toggle logic
+    // Theme toggle
     function setTheme(theme){
       document.documentElement.setAttribute("data-theme", theme);
       localStorage.setItem("theme", theme);
@@ -199,18 +214,16 @@
       const current=document.documentElement.getAttribute("data-theme");
       setTheme(current==="light"?"dark":"light");
     });
-    // Load stored preference
     const saved=localStorage.getItem("theme")||"light";
     setTheme(saved);
 
     // API
     const api = {
       async list(){ const r=await fetch('/api/tasks'); if(!r.ok) throw new Error('Load failed'); return r.json(); },
-      async add(d){ const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:d})}); if(!r.ok) throw new Error('Add failed'); return r.json(); },
+      async add(d,p){ const r=await fetch('/api/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({description:d,priority:p})}); if(!r.ok) throw new Error('Add failed'); return r.json(); },
       async complete(id){ const r=await fetch(`/api/tasks/${id}/complete`,{method:'PATCH'}); if(!r.ok) throw new Error('Complete failed'); return r.json(); },
       async remove(id){ const r=await fetch(`/api/tasks/${id}`,{method:'DELETE'}); if(!r.ok && r.status!==204) throw new Error('Delete failed'); return true; },
       async chat(message, execute=true){ const r=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message,execute})}); const data=await r.json(); if(!r.ok) throw new Error(data.error||'Assistant error'); return data; },
-      async mode(){ const r=await fetch('/api/mode',{cache:'no-store'}); return r.json(); }
     };
 
     let tasks = [];
@@ -233,16 +246,43 @@
       const frag=document.createDocumentFragment();
       for(const t of applyFilters(tasks)){
         const card=document.createElement('div'); card.className='card';
-        const desc=document.createElement('div'); desc.className='desc'+(t.completed?' done':''); desc.textContent=t.description;
-        const completeBtn=document.createElement('button'); completeBtn.className='pill pill-green'; completeBtn.textContent='✓';
+
+        // description
+        const desc=document.createElement('div'); 
+        desc.className='desc'+(t.completed?' done':''); 
+        desc.textContent=t.description;
+
+        // priority badge
+        const badge=document.createElement('span');
+        badge.classList.add('priority-badge');
+        if(t.completed){
+          badge.classList.add('priority-done');
+          badge.textContent = t.priority.charAt(0).toUpperCase()+t.priority.slice(1);
+        } else {
+          badge.classList.add(`priority-${t.priority}`);
+          badge.textContent = t.priority.charAt(0).toUpperCase()+t.priority.slice(1);
+        }
+
+        // complete button
+        const completeBtn=document.createElement('button'); 
+        completeBtn.className='pill pill-green'; 
+        completeBtn.textContent='✓';
         completeBtn.title='Complete';
         completeBtn.disabled=t.completed;
         completeBtn.addEventListener('click', async ()=>{ if(!t.completed){ await api.complete(t.id); await load(); }});
-        const delBtn=document.createElement('button'); delBtn.className='pill pill-red'; delBtn.textContent='🗑'; delBtn.title='Delete';
+
+        // delete button
+        const delBtn=document.createElement('button'); 
+        delBtn.className='pill pill-red'; 
+        delBtn.textContent='🗑'; 
+        delBtn.title='Delete';
         delBtn.addEventListener('click', async ()=>{ await api.remove(t.id); await load(); });
-        const dot=document.createElement('div'); dot.style.width='10px'; dot.style.height='10px';
-        dot.style.borderRadius='50%'; dot.style.background=t.completed?'var(--green)':'#9ca3af';
-        card.appendChild(dot); card.appendChild(desc); card.appendChild(completeBtn); card.appendChild(delBtn);
+
+        // assemble
+        card.appendChild(desc); 
+        card.appendChild(badge); 
+        card.appendChild(completeBtn); 
+        card.appendChild(delBtn);
         frag.appendChild(card);
       }
       list.appendChild(frag);
@@ -264,31 +304,33 @@
         if(data.executed && data.decision){
           addBubble(`executed: ${data.decision.function}`,'ai');
         }
-        await load(); await setModeBadge();
+        await load();
       }catch(e){ addBubble(`error: ${e.message}`,'ai'); }
     }
 
     async function addFromInput(){
-      const input=$('#taskInput'); const text=input.value.trim(); if(!text) return;
-      await api.add(text); input.value=''; await load();
-    }
-
-    async function setModeBadge(){
-      try{ const info=await api.mode(); $('#modeBadge').textContent = info.model?`mode: ${info.mode} (${info.model})`:`mode: ${info.mode}`; }
-      catch{ $('#modeBadge').textContent='mode: …'; }
+      const input=$('#taskInput'); 
+      const text=input.value.trim(); 
+      const priority=$('#prioritySelect').value;
+      if(!text) return;
+      await api.add(text,priority); 
+      input.value=''; 
+      await load();
     }
 
     $('#addBtn').addEventListener('click', addFromInput);
     $('#taskInput').addEventListener('keydown', e=>{ if(e.key==='Enter') addFromInput(); });
     $('#sendBtn').addEventListener('click', sendChat);
     $('#chatInput').addEventListener('keydown', e=>{ if(e.key==='Enter') sendChat(); });
-    $('#refreshBtn').addEventListener('click', ()=>{ load(); setModeBadge(); });
+
+    // 🔹 Refresh button reloads whole page
+    $('#refreshBtn').addEventListener('click', ()=>{ location.reload(); });
 
     $('#searchInput').addEventListener('input', e=>{ state.search = e.target.value; render(); });
     $('#filterSelect').addEventListener('change', e=>{ state.filter = e.target.value; render(); });
     $('#sortSelect').addEventListener('change', e=>{ state.sort = e.target.value; render(); });
 
-    setModeBadge(); load();
+    load();
   </script>
 </body>
 </html>
